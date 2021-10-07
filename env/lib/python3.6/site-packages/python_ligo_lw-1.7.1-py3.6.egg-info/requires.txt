@@ -1,0 +1,7 @@
+ligo-segments
+lscsoft-glue
+numpy
+python-dateutil
+pyyaml
+six
+tqdm
