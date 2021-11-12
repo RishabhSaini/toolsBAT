@@ -30,42 +30,60 @@ from operator import itemgetter
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
-
+from swifttools.swift_too import Swift_ObsQuery
+from time import sleep
 
 class BAT_tools(object):
 
-    @staticmethod
-    def unix2met(unixtime):
+    def unix2met(self, unixtime):
         """Convert Unix time to Spacecraft time"""
         return int(unixtime) - time.mktime((2001,1,1,0,0,0,0,0,0))+(unixtime-int(unixtime))
 
-    @staticmethod
-    def unix2mjd(unixtime):
+    def unix2mjd(self, unixtime):
         """Convert UNIX timestamp into MJD"""
         dt = Time(unixtime,format='unix',scale='utc')
         return dt.mjd
 
+    def loginSwift():
+        username = 'sainiris'
+        shared_secret = '0cytbonAiHD13G8dFUfC'
+        query = Swift_ObsQuery()
+        query.username = username
+        query.shared_secret = shared_secret
+        return query 
+
     #https://www.swift.psu.edu/too_api/index.php?md=Swift%20Observation%20Query%20Example%20Notebook.ipynb
     #Querying by time function
     def get_attitude(self, trigtime_obj):
-        unixtime=time.mktime(trigtime_obj.timetuple())
-        mjd= self.unix2mjd(unixtime)
-        base = 'https://www.swift.psu.edu/operations/afst_json.php?mjdstart='
-
-        file_url = 'https://www.swift.ac.uk/archive/reproc/03110829010/auxil/sw03110829010sat.fits.gz'
-        url = base+str(mjd)
-        r = requests.get(url = url)
-        settle_time = datetime.datetime.strptime(json.loads(r.text)['api_data']['entries'][0]['api_data']['settle'], "%Y-%m-%d %H:%M:%S")
+        #unixtime=time.mktime(trigtime_obj.timetuple())
+        #mjd= self.unix2mjd(unixtime)
+        #
+        timestamp = trigtime_obj
+        username = 'sainiris'
+        shared_secret = '0cytbonAiHD13G8dFUfC'
+        print("Here", timestamp)
+        query = Swift_ObsQuery(username, shared_secret, begin=timestamp)
+        if query.status.status == 'Accepted':
+          print("All good")
+        else:
+          print(f"Not good: {query.status}")
+          return -1,-1,-1
+        #
+        obsid = query[0].obsnum
+        settle_time = query[0].settle
         if trigtime_obj<settle_time:
-            print('WARNING: Trigger time in slew. ObsSchedule pointing info not reliable. Must use attitude file.')
+            print(f'Swift was slewing during your time of interest. Consult the attitude file associated with obsid {obsid}.')
+            file_url = f'https://www.swift.ac.uk/archive/reproc/{obsid}/auxil/sw{obsid}sat.fits.gz'
+            r = requests.get(url = file_url)
+            print("Data: ",json.loads(r.text))
             return -1,-1,-1
         else:
-            ra=float(json.loads(r.text)['api_data']['entries'][0]['api_data']['ra'])
-            dec=float(json.loads(r.text)['api_data']['entries'][0]['api_data']['dec'])
-            roll=float(json.loads(r.text)['api_data']['entries'][0]['api_data']['roll'])
+            ra=float(query[0].ra)
+            dec=float(query[0].dec)
+            roll=float(query[0].roll)
         return ra,dec,roll
 
-    def sanatize_footprint_ccds(ccds):
+    def sanatize_footprint_ccds(self, ccds):
         """Using this function to convert the string Polygons to a list of points"""
         footprint_ccds = []
         for footprint in ccds:
@@ -79,7 +97,7 @@ class BAT_tools(object):
             footprint_ccds.append(polygon)
         return footprint_ccds
 
-    def ra_dec_to_uvec(ra, dec):
+    def ra_dec_to_uvec(self, ra, dec):
         phi = np.deg2rad(90 - dec)
         theta = np.deg2rad(ra)
         x = np.cos(theta) * np.sin(phi)
@@ -87,7 +105,7 @@ class BAT_tools(object):
         z = np.cos(phi)
         return x, y, z
 
-    def uvec_to_ra_dec(x, y, z):
+    def uvec_to_ra_dec(self, x, y, z):
         r = np.sqrt(x**2 + y ** 2 + z ** 2)
         x /= r
         y /= r
@@ -101,7 +119,7 @@ class BAT_tools(object):
             ra = np.rad2deg(theta)
         return ra, dec
 
-    def x_rot(theta_deg):
+    def x_rot(self, theta_deg):
         theta = np.deg2rad(theta_deg)
         return np.matrix([
             [1, 0, 0],
@@ -109,7 +127,7 @@ class BAT_tools(object):
             [0, np.sin(theta), np.cos(theta)]
         ])
 
-    def y_rot(theta_deg):
+    def y_rot(self, theta_deg):
         theta = np.deg2rad(theta_deg)
         return np.matrix([
             [np.cos(theta), 0, np.sin(theta)],
@@ -117,7 +135,7 @@ class BAT_tools(object):
             [-np.sin(theta), 0, np.cos(theta)]
         ])
 
-    def z_rot(theta_deg):
+    def z_rot(self, theta_deg):
         theta = np.deg2rad(theta_deg)
         return np.matrix([
             [np.cos(theta), -np.sin(theta), 0],
@@ -143,7 +161,7 @@ class BAT_tools(object):
             proj_footprint.append([pt_ra, pt_dec])
         return proj_footprint
     
-    def getDataFromTLE(datetime, tleLatOffset=0, tleLonOffset=0.21):
+    def getDataFromTLE(self, datetime, tleLatOffset=0, tleLonOffset=0.21):
         # Get TLE and parse
         url = "https://celestrak.com/satcat/tle.php?CATNR=28485"
         data = urlopen(url)
@@ -192,7 +210,7 @@ class BAT_tools(object):
 
         return lon, lat, elevation
 
-    def deg2dm(deg):
+    def deg2dm(self, deg):
         sign = np.sign(deg)
         deg = np.abs(deg)
         d = np.floor(deg)
@@ -261,7 +279,7 @@ class BAT_tools(object):
         Earthcont = self.project_footprint(contour, ra, dec, 0)
         return Earthcont
 
-    def splitter(batfootprint):
+    def splitter(self, batfootprint):
         hi=[]
         lo=[]
         for coord in batfootprint:
@@ -293,15 +311,13 @@ class BAT_tools(object):
 
         return lo,hi
 
-    def justPlot(self, time):
+    def justPlot(self, stime):
+        
         #Link to the attitude file
         #During Slew (switft turns at 1deg/sec)
         #if spacecraft currently slewing or changing directions, then download data from this file for plotting 
-        url = 'https://www.swift.ac.uk/archive/reproc/03110829010/auxil/sw03110829010sat.fits.gz'
-        attfile = download_file(url)
-        att = fits.open(attfile)
-        att_data=att[1].data
-        utcf=att[1].header['utcfinit']
+        
+
         api_token = 'zeH0plj1hlUo0OWskopBddaQB8M8VwwYc1m86Q'
         BASE = 'http://treasuremap.space/api/v0'
         TARGET = 'footprints'
@@ -339,7 +355,8 @@ class BAT_tools(object):
             
         p = PatchCollection(patches, alpha=0.4)
 
-        trigtime_obj=datetime.datetime.strptime(time, "%Y-%m-%dT%H:%M:%S")
+        trigtime_obj=datetime.datetime.strptime(stime, "%Y-%m-%dT%H:%M:%S")
+        #print(trigtime_obj.timetuple())
         unixtime = time.mktime(trigtime_obj.timetuple())
         T0=self.unix2met(unixtime)
 
@@ -399,8 +416,9 @@ class BAT_tools(object):
         ligo.skymap.plot.outline_text(ax)
         plt.title('FRB 200206a M81')
 
-    if(__name__ == "__main__"):
-        justPlot('2020-03-11T10:31:21');
+if __name__ == "__main__":
+    p = BAT_tools() 
+    p.justPlot('2021-11-11T00:55:00')
 
 
 
