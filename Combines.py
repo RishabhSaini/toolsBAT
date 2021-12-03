@@ -1,7 +1,7 @@
 import ligo.skymap
 import numpy as np
 import time
-import datetime
+from datetime import datetime
 from astropy.time import Time
 from urllib.request import urlopen
 from bs4 import BeautifulSoup
@@ -32,6 +32,9 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 from swifttools.swift_too import Swift_ObsQuery
 from time import sleep
+import ligo.skymap.plot
+import gzip
+from lal_post_subs import cut_prime_meridian
 
 class BAT_tools(object):
 
@@ -68,15 +71,21 @@ class BAT_tools(object):
         else:
           print(f"Not good: {query.status}")
           return -1,-1,-1
-        #
+        
+        
         obsid = query[0].obsnum
+        print(obsid)
         settle_time = query[0].settle
+     
         if trigtime_obj<settle_time:
             print(f'Swift was slewing during your time of interest. Consult the attitude file associated with obsid {obsid}.')
             file_url = f'https://www.swift.ac.uk/archive/reproc/{obsid}/auxil/sw{obsid}sat.fits.gz'
-            r = requests.get(url = file_url)
-            print("Data: ",json.loads(r.text))
-            return -1,-1,-1
+            dat = fits.open(file_url)
+            ra = float(dat[0].header["RA_PNT"])
+            dec =  float(dat[0].header["DEC_PNT"])
+            roll = float(dat[0].header["PA_PNT"])
+            return ra, dec, roll
+        
         else:
             ra=float(query[0].ra)
             dec=float(query[0].dec)
@@ -144,7 +153,7 @@ class BAT_tools(object):
         ])
 
 
-    def project_footprint(footprint, ra, dec, pos_angle, self):
+    def project_footprint(self, footprint, ra, dec, pos_angle):
         if pos_angle is None:
             pos_angle = 0.0
 
@@ -271,13 +280,13 @@ class BAT_tools(object):
 
         return ra_geocenter,dec_geocenter, earthsize_rad
 
-    def makeEarthContour(ra,dec,radius, self):
+    def makeEarthContour(self, ra, dec, radius):
         thetas = np.linspace(0, -2*np.pi, 200)
         ras = radius * np.cos(thetas)
         decs = radius * np.sin(thetas)
         contour = np.c_[ras,decs]
-        Earthcont = self.project_footprint(contour, ra, dec, 0)
-        return Earthcont
+        earthcont = self.project_footprint(contour, ra, dec, 0)
+        return earthcont
 
     def splitter(self, batfootprint):
         hi=[]
@@ -311,15 +320,16 @@ class BAT_tools(object):
 
         return lo,hi
 
-    def justPlot(self, stime):
+    def justPlot(self,stime):
+        #Time conversions to Met
+        #get the attitude file from the identidfied Obsid
+        trigtime_obj = datetime.strptime(stime, "%Y-%m-%dT%H:%M:%S")
+        unixtime = time.mktime(trigtime_obj.timetuple())
+        T0=self.unix2met(unixtime)
         
-        #Link to the attitude file
-        #During Slew (switft turns at 1deg/sec)
-        #if spacecraft currently slewing or changing directions, then download data from this file for plotting 
-        
-
         api_token = 'zeH0plj1hlUo0OWskopBddaQB8M8VwwYc1m86Q'
         BASE = 'http://treasuremap.space/api/v0'
+        
         TARGET = 'footprints'
 
         params = {
@@ -330,8 +340,9 @@ class BAT_tools(object):
         url = "{}/{}?{}".format(BASE, TARGET, urllib.parse.urlencode(params))
         r = requests.get(url = url)
 
-        footprints = json.loads(r.text)
+        print("Requested Footprint Info")
 
+        footprints = json.loads(r.text)
         polygons = []
         patches = []
 
@@ -355,19 +366,22 @@ class BAT_tools(object):
             
         p = PatchCollection(patches, alpha=0.4)
 
-        trigtime_obj=datetime.datetime.strptime(stime, "%Y-%m-%dT%H:%M:%S")
-        #print(trigtime_obj.timetuple())
-        unixtime = time.mktime(trigtime_obj.timetuple())
-        T0=self.unix2met(unixtime)
+        # fig, ax = plt.subplots()
+        # ax.set_xlim(min(xs)-.1, max(xs)+.1)
+        # ax.set_ylim(min(ys)-.1, max(ys)+.1)
+        # ax.add_collection(p)
+        
 
-        ra,dec,roll = self.get_attitude(trigtime_obj)
-        batfootprint=self.project_footprint(sc, ra,dec,360-roll)
+        ra, dec, roll = self.get_attitude(trigtime_obj)
+        #ra,dec,roll= 290.52021618,  -3.1716724 , 102.04972076
 
+        print("ra:{},dec:{},roll:{}".format(ra,dec,roll))
+        batfootprint= self.project_footprint(sc, ra,dec,360-roll)
+        
+        
         url = 'https://heasarc.gsfc.nasa.gov/FTP/fermi/data/gbm/triggers/2020/bn201227635/quicklook/glg_healpix_all_bn201227635.fit'
+        
         skymapfile = download_file(url, cache=True) 
-        #skymap, metadata = ligo.skymap.io.fits.read_sky_map(url, nest=True, distances=False)
-
-        #nside=hp.get_nside(skymap)
         skymap = hp.read_map(skymapfile)
         nside = 128
         deg2perpix = hp.nside2pixarea(nside, degrees=True)
@@ -380,45 +394,31 @@ class BAT_tools(object):
         center = SkyCoord(116, -72, unit="deg")  # defaults to ICRS frame
         ax = plt.axes(projection='astro hours mollweide')#, center = center, radius = 50*u.degree)#radius, center options
         ax.grid()
-        try:
-            vmax = probperdeg2.max()
-            img = ax.imshow_hpx((probperdeg2, 'ICRS'), nested=False, vmin=0., vmax=vmax, cmap='cylon')
-            cls = 100* ligo.skymap.postprocess.util.find_greedy_credible_levels(skymap)
-            cs = ax.contour_hpx((cls, 'ICRS'), nested=metadata['nest'],colors='k', linewidths=0.5, levels=(50,90))
-        except:
-            print('No map')
+        vmax = probperdeg2.max()
+        img = ax.imshow_hpx((probperdeg2, 'ICRS'), nested=False, vmin=0., vmax=vmax, cmap='cylon')
+        cls = 100* ligo.skymap.postprocess.util.find_greedy_credible_levels(skymap)
+        #cs = ax.contour_hpx((cls, 'ICRS'), nested=metadata['nest'],colors='k', linewidths=0.5, levels=(50,90))
         fmt = r'%g\%%' if rcParams['text.usetex'] else '%g%%'
         #plt.clabel(cs, fmt=fmt, fontsize=6, inline=True)
 
+        #earthfoot=self.makeEarthContour(242.58,11.61, 10.25)
+        # from matplotlib.patches import Polygon
+        #earth = Polygon( earthfoot, facecolor='blue', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
+        #ax.add_patch(earth)
 
-        ra,dec,radius = self.getearthsatpos(trigtime_obj)
-        earthfoot=self.makeEarthContour(ra,dec,radius)
+        ax.plot_coord(SkyCoord(79, 54, unit='deg'),'o',markerfacecolor ='blue',markersize=10)
+        # ax.text(195, 26,'I8720', transform=ax.get_transform('fk5'),fontsize=15, color='blue')
 
-        earth = Polygon( earthfoot, facecolor='blue', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
-        ax.add_patch(earth)
-
-        ax.plot_coord(SkyCoord(150, 69, unit='deg'),'o',markerfacecolor ='blue',markersize=10)
-        ax.text(150, 69,'FRB', transform=ax.get_transform('fk5'),fontsize=15, color='blue')
-
-
-        # poly = Polygon( batfootprint, facecolor='green', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
-        # ax.add_patch(poly)
-
-        split=True
-        if split:
-            lo,hi=self.splitter(batfootprint)
-            polylo = Polygon( lo, facecolor='green', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
-            ax.add_patch(polylo)
-            polyhi = Polygon( hi, facecolor='green', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
-            ax.add_patch(polyhi)
-
-
+        poly = Polygon( batfootprint, facecolor='green', edgecolor='green', alpha=0.4, closed=True, transform=ax.get_transform('fk5'))
+        ax.add_patch(poly)
         ligo.skymap.plot.outline_text(ax)
-        plt.title('FRB 200206a M81')
+        plt.title('GRB 200923A')
+        plt.show()
+        
 
 if __name__ == "__main__":
     p = BAT_tools() 
-    p.justPlot('2021-11-11T00:55:00')
+    p.justPlot('2021-11-18T00:15:15')
 
 
 
