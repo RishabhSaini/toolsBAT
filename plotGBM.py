@@ -33,27 +33,29 @@ class BAT_tools(object):
           print(f"Not good: {query.status}")
           return -1,-1,-1
         
-        
+        #print("Query is:",query[0])
         obsid = query[0].obsnum
         return obsid
 
 
-    def justPlot(self,stime):
+    def justPlot(self,stime, trigid = 0):
         #Time conversions to Met
         #get the attitude file from the identidfied Obsid
-        trigtime_obj = datetime.strptime(stime, "%Y-%m-%dT%H:%M:%S")
-        unixtime = time.mktime(trigtime_obj.timetuple())
+        
+        #trigtime_obj = datetime.strptime(stime, "%Y-%m-%dT%H:%M:%S")
+        #plt.ion()
+        
+        unixtime = time.mktime(stime.timetuple())
+
         t0=self.unix2met(unixtime)
  
-        obsid = self.get_obsid(trigtime_obj)
+        obsid = self.get_obsid(stime)
         url = f'https://www.swift.ac.uk/archive/reproc/{obsid}/auxil/sw{obsid}sao.fits.gz'
         #wget.download(url)
         saoFile = f'sw{obsid}sao.fits.gz' 
         pos = SwiftPosHist.open(saoFile)
         bat = SwiftBatPartialCoding()
        
- 
-        #fig = plt.figure(figsize=(15, 15), dpi=100)
         s = SkyPlot()
         s.add_poshist(pos, t0, detectors=[],galactic_plane=False)
 
@@ -73,9 +75,10 @@ class BAT_tools(object):
           for path in paths:
             poly = SkyPolygon(path[:,0], path[:,1], s.ax, color='gray', face_alpha=0.3, flipped=True)
             polys.append(poly)
-
-        plt.savefig('swift_bat_obs.png', dpi=200, bbox_inches='tight')       
-                
+        
+        filename = f'{trigid}_skymap.png'
+        plt.savefig(filename)       
+        return filename        
 
 if __name__ == "__main__":
     p = BAT_tools() 
