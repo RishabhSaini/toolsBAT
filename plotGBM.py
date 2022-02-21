@@ -56,6 +56,7 @@ class BAT_tools(object):
         pos = SwiftPosHist.open(saoFile)
         bat = SwiftBatPartialCoding()
        
+        plt.figure()
         s = SkyPlot()
         s.add_poshist(pos, t0, detectors=[],galactic_plane=False)
 
@@ -77,7 +78,7 @@ class BAT_tools(object):
             polys.append(poly)
         
         filename = f'{trigid}_skymap.png'
-        plt.savefig(filename)       
+        print("type of s: ", type(s))     
         return filename        
 
 if __name__ == "__main__":
