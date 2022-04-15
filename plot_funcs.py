@@ -12,6 +12,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
+from swifttools.swift_too import Swift_ObsQuery
+import wget
+from swift_poshist import SwiftPosHist
+from astropy.io import fits 
+
+
 
 def getPosFromTLE(trigtime):
 	# Get TLE and parse
@@ -24,7 +30,7 @@ def getPosFromTLE(trigtime):
 	# Print age of TLE
 	year = "20"+tle_obj[1][18:20]
 	day = tle_obj[1][20:32]
-	print("\nTLE most recently updated "+year+"DOY"+ day)
+	#print("\nTLE most recently updated "+year+"DOY"+ day)
 	
 	# Create spacecraft instance
 	Swift = ephem.readtle(tle_obj[0],tle_obj[1],tle_obj[2])
@@ -448,6 +454,7 @@ def mcilwain_map(lat_range, lon_range, m, ax, saa_mask=False, color=None,
 	return image
 
 def orbitfromsao(saofile):
+	#orbitdat=saofile._data
 	orbitdat=saofile[1].data
 	times=[]
 	lats=[]
@@ -511,14 +518,31 @@ def earth_line(lat, lon, m, ax, color='black', alpha=0.4):
         refs.append(m.plot(x, y, ax=ax, color=color, alpha=alpha))
     return refs
 
+def get_obsid(trigtime_obj):
+        timestamp = trigtime_obj
+        username = 'sainiris'
+        shared_secret = '0cytbonAiHD13G8dFUfC'
+        #print("Here", timestamp)
+        query = Swift_ObsQuery(username, shared_secret, begin=timestamp)
+        if query.status.status != 'Accepted':
+          return -1,-1,-1
+        
+        #print("Query is:",query[0])
+        obsid = query[0].obsnum
+        return obsid
+
 def SwiftEarthPlot(trigtime,trigid,  prompt=True):
+	plt.rcParams.update({'figure.max_open_warning': 0})
 	if prompt == True:
 		sclons, sclats, scalts = getPosFromTLE(trigtime)
 	else:
 	#get from sao file
-		obsid = getobsid(trigtime.timestamp())
-		saofile = getsaofile(obsid)
-		times, sclats, sclons, scalts = orbitfromsao(saofile)[0:4]  #iknow the order doesnt look right, but it is
+		obsid = get_obsid(trigtime)
+		url = f'https://www.swift.ac.uk/archive/reproc/{obsid}/auxil/sw{obsid}sao.fits.gz'
+		wget.download(url)
+		file = f'sw{obsid}sao.fits.gz'
+		saofile = fits.open(file)
+		times, sclons, sclats, scalts = orbitfromsao(saofile)[0:4]  #iknow the order doesnt look right, but it is
 
 	fig, ax = plt.subplots(figsize=(20,10), dpi=100)
 	lat_range = (-30.0, 30.0)
@@ -533,9 +557,6 @@ def SwiftEarthPlot(trigtime,trigid,  prompt=True):
 	map.drawmeridians(np.arange(-180., 181., 30.), labels=[0, 0, 0, 1],
 						fontsize=12)
 
-	#SC trajectory
-	artist = earth_line(sclats,sclons, map, ax)
-
   #pos at trig time
 	if prompt:
 		triglon, triglat = sclons[1000],sclats[1000]
@@ -547,7 +568,13 @@ def SwiftEarthPlot(trigtime,trigid,  prompt=True):
 		triglon, triglat = sclons[index], sclats[index]
 		if triglon > 180.0:
 			triglon = -(360-triglon)
-	
+
+		times = times[index - 2000 : index + 2000]
+		sclons = sclons[index - 2000 : index + 2000]	
+		sclats = sclats[index - 2000 : index + 2000]
+
+	#SC trajectory
+	artist = earth_line(sclats,sclons, map, ax)
 
 	# SAA polygon
 	lons,lats=list(zip(*BATSAA(triglon,triglat).points)) 
@@ -563,6 +590,7 @@ def SwiftEarthPlot(trigtime,trigid,  prompt=True):
 	# im = plt.imshow(plt.imread(f,0), extent=(x0, x1, y0, y1))
 
 	f = urlopen("https://www.n2yo.com/inc/saticon.php?t=0&s=28485")
+	#Download url, and read from local
 	im = OffsetImage(plt.imread(f,0), zoom=1)
 	ab = AnnotationBbox(im, (map(triglon,triglat)), xycoords='data', frameon=False)
 	map._check_ax().add_artist(ab)
@@ -584,7 +612,7 @@ def SwiftEarthPlot(trigtime,trigid,  prompt=True):
 		title = f'E Long, Lat={round(triglon,1), round(triglat,1)} FINAL '
 		ax.set_title(title)
 
-	filename = f'EarthPlot.png'
+	filename = f"{trigid}_earthplot.png"
 	plt.savefig(filename)
 
 	return filename
